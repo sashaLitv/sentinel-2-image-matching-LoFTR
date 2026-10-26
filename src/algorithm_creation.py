@@ -59,6 +59,8 @@ class AlgorithmConfig:
     device: str = 'cpu'
     tile_size: int = MIN_TILE_SIZE
     overlap: int = MIN_OVERLAP
+    overlap_conf_slope: float = 3.0
+    overlap_conf_midpoint: float = 2.5
     confidence_threshold: float = 0.8
     ransac_threshold: float = 3.0
     min_matches: int = 15

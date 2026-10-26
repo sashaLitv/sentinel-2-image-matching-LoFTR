@@ -44,78 +44,12 @@ class MatchResult:
     def is_empty(self):
         return len(self.pts0) == 0
 
-
-
-## inlier count -> confidence the two images overlap.
-OVERLAP_CONF_SLOPE    = 3.0
-OVERLAP_CONF_MIDPOINT = 2.5   ## log10(inliers) at which P(overlap) = 0.5
-
-def overlap_confidence(n_inliers, slope=OVERLAP_CONF_SLOPE, midpoint=OVERLAP_CONF_MIDPOINT):
-    '''Confidence that two images cover the same location, from verified inlier count.'''
-    n = max(int(n_inliers), 0)
-    z = slope * (math.log10(n + 1.0) - midpoint)
-    return 1.0 / (1.0 + math.exp(-z))
-
-def _rule(char="-"): 
-    return char * 60
-
-def _row(label, value):
-    '''One aligned "label .......... value" line inside a report block.'''
-    return f"  {label} {'.' * max(1, 32 - len(label))} {value}"
-def render_alignment_failure(diag: AlignmentDiagnostics, image_path0, image_path1):
-    '''
-        ONE consolidated block explaining why alignment failed. Replaces the scattered
-        per-layer warnings; the caller prints this and nothing else about the failure.
-    '''
-    reason_text = diag.reason
-    if reason_text in ["too_few_inliers", "global_fit_failed"]:
-        reason_text = "no correction needed (already co-registered) or locations differ"
-
-    lines = [
-        _rule("="),
-        f" ALIGNMENT NOTICE — {os.path.basename(image_path0)} vs {os.path.basename(image_path1)}",
-        "  Standard geometric correction was skipped; evaluating direct co-registration.",
-        _rule("-"),
-        _row("anchors selected", diag.anchors_selected),
-        _row("anchors matched", diag.anchors_matched),
-        _row("candidate tiles scored", diag.candidate_tiles_scored),
-        _row("candidates passing sanity", diag.candidates_passing_sanity),
-        _row("best inlier count", f"{diag.best_inlier_count}   (required: {diag.required_inliers})"),
-        _row("pooled points", diag.pooled_points),
-        _row("pooled inliers", diag.pooled_inliers),
-        _row("reason", reason_text),
-        _rule("="),
-    ]
-    return "\n".join(lines)
-
-def render_result(results, diag: AlignmentDiagnostics):
-    '''
-        ONE final conclusion block: confidence that the two images overlap, plus the
-        inlier/match counts and the alignment verdict. Always printed, success or failure.
-    '''
-    conf = results.overlap_confidence
-    conf_note = "HIGH — likely the same location" if conf >= 0.5 else "LOW — likely NOT the same location"
-    
-    if diag.aligned:
-        verdict = "OK (aligned)"
-    elif conf >= 0.5:
-        verdict = "OK (co-registered via grid / identity fallback)"
-    else:
-        verdict = "NOTE (distinct locations or insufficient overlap)"
-
-    lines = [
-        _rule("="),
-        " RESULT",
-        _row("overlap confidence", f"{conf:.3f}  ({conf_note})"),
-        _row("inliers", int(np.sum(results.inliers_mask))),
-        _row("total matches", len(results.pts0)),
-        _row("alignment", verdict),
-        _rule("="),
-    ]
-    return "\n".join(lines)
-
 class MatchingPipeline:
     '''Pipeline for processing and matching satellite images across tiles.'''
+    ## inlier count -> confidence the two images overlap.
+    overlap_conf_slope    = 3.0
+    overlap_conf_midpoint = 2.5   ## log10(inliers) at which P(overlap) = 0.5
+    
     def __init__(self, engine: InferenceEngine, config: AlgorithmConfig, output=True):
         self.aligner = GlobalAligner(
             engine, config.ransac_threshold, config.tile_size, config.overlap, config.min_matches,
@@ -127,6 +61,76 @@ class MatchingPipeline:
         self.matcher = SatelliteMatcher(engine)
         self.ransac_threshold = config.ransac_threshold
         self.output = output
+
+        self.overlap_conf_slope = config.overlap_conf_slope
+        self.overlap_conf_midpoint = config.overlap_conf_midpoint
+
+    
+    def overlap_confidence(self, n_inliers):
+        '''Confidence that two images cover the same location, from verified inlier count.'''
+        n = max(int(n_inliers), 0)
+        z = self.overlap_conf_slope * (math.log10(n + 1.0) - self.overlap_conf_midpoint)
+        return 1.0 / (1.0 + math.exp(-z))
+
+    def _rule(self, char="-"): 
+        return char * 60
+    def _row(self, label, value):
+        '''One aligned "label .......... value" line inside a report block.'''
+        return f"  {label} {'.' * max(1, 32 - len(label))} {value}"
+    
+    def render_alignment_failure(self, diag: AlignmentDiagnostics, image_path0, image_path1):
+        '''
+            ONE consolidated block explaining why alignment failed. Replaces the scattered
+            per-layer warnings; the caller prints this and nothing else about the failure.
+        '''
+        reason_text = diag.reason
+        if reason_text in ["too_few_inliers", "global_fit_failed"]:
+            reason_text = "no correction needed (already co-registered) or locations differ"
+
+        lines = [
+            self._rule("="),
+            f" ALIGNMENT NOTICE — {os.path.basename(image_path0)} vs {os.path.basename(image_path1)}",
+            "  Standard geometric correction was skipped; evaluating direct co-registration.",
+            self._rule("-"),
+            self._row("anchors selected", diag.anchors_selected),
+            self._row("anchors matched", diag.anchors_matched),
+            self._row("candidate tiles scored", diag.candidate_tiles_scored),
+            self._row("candidates passing sanity", diag.candidates_passing_sanity),
+            self._row("best inlier count", f"{diag.best_inlier_count}   (required: {diag.required_inliers})"),
+            self._row("pooled points", diag.pooled_points),
+            self._row("pooled inliers", diag.pooled_inliers),
+            self._row("reason", reason_text),
+            self._rule("="),
+        ]
+        return "\n".join(lines)
+    def render_result(self, results, diag: AlignmentDiagnostics):
+        '''
+            ONE final conclusion block: confidence that the two images overlap, plus the
+            inlier/match counts and the alignment verdict. Always printed, success or failure.
+        '''
+        n_inliers = int(np.sum(results.inliers_mask))
+        conf = self.overlap_confidence(n_inliers)           
+        conf_note = "HIGH — likely the same location" if conf >= 0.5 else "LOW — likely NOT the same location"
+        
+        if diag.aligned:
+            verdict = "OK (aligned)"
+        elif conf >= 0.5:
+            verdict = "OK (co-registered via grid / identity fallback)"
+        else:
+            verdict = "NOTE (distinct locations or insufficient overlap)"
+
+        lines = [
+            self._rule("="),
+            " RESULT",
+            self._row("overlap confidence", f"{conf:.3f}  ({conf_note})"),
+            self._row("inliers", n_inliers),
+            self._row("total matches", len(results.pts0)),
+            self._row("alignment", verdict),
+            self.
+            _rule("="),
+        ]
+        return "\n".join(lines)
+
 
     def _filter_outliers(self, pts0, pts1):
         '''Filter outlier matches by estimating the homography between the two point sets (RANSAC/MAGSAC).'''
@@ -153,7 +157,7 @@ class MatchingPipeline:
         H, diag = self.aligner.estimate_homography(img0, img1)
         if H is None:
             ## ONE consolidated block explaining the failure — no scattered warnings.
-            if self.output: print(render_alignment_failure(diag, image_path0, image_path1))
+            if self.output: print(self.render_alignment_failure(diag, image_path0, image_path1))
             H = np.eye(3, dtype=np.float32)
         
         tile_generator = self.preprocessor.generate_tile_pairs(image_path0, image_path1, H)
@@ -202,7 +206,7 @@ class MatchingPipeline:
                     )
                 inliers_mask = np.zeros(len(all_pts0), dtype=bool)
 
-        overlap_conf = overlap_confidence(np.sum(inliers_mask))
+        overlap_conf = self.overlap_confidence(np.sum(inliers_mask))
 
         
         results = MatchResult(
@@ -217,7 +221,7 @@ class MatchingPipeline:
             diagnostics=diag
         )
 
-        if self.output: print(render_result(results, diag))
+        if self.output: print(self.render_result(results, diag))
 
         return results
     
