@@ -1,0 +1,8 @@
+venv_cv/
+.env
+
+__pycache__/
+.DS_Store
+
+# for ignoring my second brain
+_project_context.md
