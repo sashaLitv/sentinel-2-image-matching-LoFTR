@@ -17,6 +17,7 @@ import math
 import kornia 
 import rasterio
 from rasterio.windows import Window
+from rasterio.enums import Resampling
 import numpy as np
 import torch
 import argparse
@@ -60,7 +61,7 @@ class AlgorithmConfig:
     tile_size: int = MIN_TILE_SIZE
     overlap: int = MIN_OVERLAP
     overlap_conf_slope: float = 3.0
-    overlap_conf_midpoint: float = 2.5
+    overlap_conf_midpoint: float = 3.0
     confidence_threshold: float = 0.8
     ransac_threshold: float = 3.0
     min_matches: int = 15
@@ -485,13 +486,34 @@ class ImagePreprocessor:
     '''
     @staticmethod
     def load_image(image_path, as_gray=True):
-        ''' Loads a satellite image from disk and converts it to grayscale if requested '''
+        '''Loads a full satellite image from disk and converts it to grayscale if requested '''
         with rasterio.open(image_path) as src:
             img = np.moveaxis(src.read([1, 2, 3]), 0, -1)
             if as_gray:
                 img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
         return img
+
+    @staticmethod
+    def load_preview(image_path, max_size=1500):
+        '''
+            Read a downscaled RGB preview straight from disk.
+
+            Returns (image_hwc, scale_x, scale_y). The scale factors map
+            FULL-resolution global coordinates onto this preview, so stored
+            match points can be drawn without ever loading the full image.
+        '''
+        with rasterio.open(image_path) as src:
+            h, w = src.height, src.width
+            scale = min(max_size / w, max_size / h, 1.0)
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+
+            arr = src.read([1, 2, 3], out_shape=(3, new_h, new_w),
+                           resampling=Resampling.average)
+            img = np.moveaxis(arr, 0, -1) 
+
+        return img, new_w / w, new_h / h
 
 
     def __init__(self, tile_size, overlap):

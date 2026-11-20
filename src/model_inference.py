@@ -46,24 +46,20 @@ class MatchResult:
 
 class MatchingPipeline:
     '''Pipeline for processing and matching satellite images across tiles.'''
-    ## inlier count -> confidence the two images overlap.
-    overlap_conf_slope    = 3.0
-    overlap_conf_midpoint = 2.5   ## log10(inliers) at which P(overlap) = 0.5
-    
     def __init__(self, engine: InferenceEngine, config: AlgorithmConfig, output=True):
+        self.preprocessor = ImagePreprocessor(tile_size=config.tile_size, overlap=config.overlap)
         self.aligner = GlobalAligner(
             engine, config.ransac_threshold, config.tile_size, config.overlap, config.min_matches,
             anchor_fraction=config.anchor_fraction, anchor_count=config.anchor_count,
             max_anchors=config.max_anchors,
             anchor_score_floor=config.anchor_score_floor
         )
-        self.preprocessor = ImagePreprocessor(tile_size=config.tile_size, overlap=config.overlap)
         self.matcher = SatelliteMatcher(engine)
         self.ransac_threshold = config.ransac_threshold
         self.output = output
 
         self.overlap_conf_slope = config.overlap_conf_slope
-        self.overlap_conf_midpoint = config.overlap_conf_midpoint
+        self.overlap_conf_midpoint = config.overlap_conf_midpoint ## log10(inliers) at which P(overlap) = 0.5
 
     
     def overlap_confidence(self, n_inliers):
@@ -224,43 +220,15 @@ class MatchingPipeline:
         if self.output: print(self.render_result(results, diag))
 
         return results
-    
-    def _safe_resize(self,image, max_size, force_divisible_by_8=False):
-        '''
-            Resize the image proportionally so neither dimension exceeds max_size, optionally 
-            rounding dimensions down to multiples of eight, and return the resized image with 
-            its x/y scale factors.
-        '''
-        h, w = image.shape[:2]
-        scale = min(max_size / w, max_size / h)
-            
-        if force_divisible_by_8:
-            scale = min(scale, 1.0)
-            new_w = int((w * scale) // 8) * 8
-            new_h = int((h * scale) // 8) * 8
-        else:
-            new_w = int(w * scale)
-            new_h = int(h * scale)
-                
-        scale_x = new_w / w
-        scale_y = new_h / h
-    
-        resized_img = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-        return resized_img, scale_x, scale_y
-    
     def draw_matches(self, matches: MatchResult, show_outliers=False, max_points=150, strategy="best"):
         '''Purely graphical: draw feature matches between two images using Kornia Moons.'''
         if matches.is_empty:
             return
 
-        img0_full = self.preprocessor.load_image(matches.image_path0, False)
-        img1_full = self.preprocessor.load_image(matches.image_path1, False)
+        img0, scale_x0, scale_y0 = self.preprocessor.load_preview(matches.image_path0)
+        img1, scale_x1, scale_y1 = self.preprocessor.load_preview(matches.image_path1)
 
-        img0, scale_x0, scale_y0 = self._safe_resize(img0_full, max_size=1500)
-        img1, scale_x1, scale_y1 = self._safe_resize(img1_full, max_size=1500)    
-
-        del img0_full, img1_full
 
         pts0 = matches.pts0.copy() * np.array([scale_x0, scale_y0])
         pts1 = matches.pts1.copy() * np.array([scale_x1, scale_y1])
@@ -339,7 +307,6 @@ def main(args):
         confidence_threshold=args.confidence_threshold,
         ransac_threshold=args.ransac_threshold
     )
-
     feature_extractor = kornia.feature.LoFTR(pretrained='outdoor').to(config.device)
     engine = InferenceEngine(feature_extractor, config)
     pipeline = MatchingPipeline(engine, config)
