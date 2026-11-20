@@ -49,13 +49,13 @@ class MatchingPipeline:
     def __init__(self, engine: InferenceEngine, config: AlgorithmConfig, output=True):
         self.preprocessor = ImagePreprocessor(tile_size=config.tile_size, overlap=config.overlap)
         self.aligner = GlobalAligner(
-            engine, config.ransac_threshold, config.tile_size, config.overlap, config.min_matches,
+            engine, config.magsac_threshold, config.tile_size, config.overlap, config.min_matches,
             anchor_fraction=config.anchor_fraction, anchor_count=config.anchor_count,
             max_anchors=config.max_anchors,
             anchor_score_floor=config.anchor_score_floor
         )
         self.matcher = SatelliteMatcher(engine)
-        self.ransac_threshold = config.ransac_threshold
+        self.magsac_threshold = config.magsac_threshold
         self.output = output
 
         self.overlap_conf_slope = config.overlap_conf_slope
@@ -129,14 +129,12 @@ class MatchingPipeline:
 
 
     def _filter_outliers(self, pts0, pts1):
-        '''Filter outlier matches by estimating the homography between the two point sets (RANSAC/MAGSAC).'''
-        magsac_algo = cv2.USAC_MAGSAC if hasattr(cv2, 'USAC_MAGSAC') else cv2.RANSAC
-
+        '''Filter outlier matches by estimating the homography between the two point sets (MAGSAC).'''
         _, inliers_mask = cv2.findHomography(
             pts0,
             pts1,
-            magsac_algo,
-            self.ransac_threshold,
+            cv2.USAC_MAGSAC,
+            self.magsac_threshold,
             0.999,
             100000
         )
@@ -297,7 +295,7 @@ class MatchingPipeline:
 def main(args):
     '''
         The function for running inference.
-        Accepts paths to images, tile size, ransac_threshold and visualization parameters.
+        Accepts paths to images, tile size, magsac_threshold and visualization parameters.
     '''
     print(f"Starting matching pipeline for:\n  img0: {args.img0}\n  img1: {args.img1}")
         
@@ -305,7 +303,7 @@ def main(args):
         device=args.device,
         tile_size=args.tile_size,
         confidence_threshold=args.confidence_threshold,
-        ransac_threshold=args.ransac_threshold
+        magsac_threshold=args.magsac_threshold
     )
     feature_extractor = kornia.feature.LoFTR(pretrained='outdoor').to(config.device)
     engine = InferenceEngine(feature_extractor, config)
@@ -327,7 +325,7 @@ if __name__ == "__main__":
     parser.add_argument("--img1", type=str, required=True, help="Path to the second satellite image")
     parser.add_argument("--confidence_threshold", type=float, default=0.8, help="LoFTR confidence threshold (default: 0.8)")
     parser.add_argument("--tile_size", type=int, default=512, help="Tile size for processing (default: 512)")
-    parser.add_argument("--ransac_threshold", type=float, default=3.0, help="RANSAC threshold (default: 3.0)")
+    parser.add_argument("--magsac_threshold", type=float, default=3.0, help="MAGSAC threshold (default: 3.0)")
     parser.add_argument("--show_outliers", action="store_true", help="Flag to visualize outlier matches (red lines)")
     parser.add_argument("--max_points", type=int, default=150, help="Maximum number of points to visualize (default: 150)")
     parser.add_argument("--device", type=str, default='cpu', help="Type of device (default: 'cpu')")

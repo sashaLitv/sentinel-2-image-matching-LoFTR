@@ -63,7 +63,7 @@ class AlgorithmConfig:
     overlap_conf_slope: float = 3.0
     overlap_conf_midpoint: float = 3.0
     confidence_threshold: float = 0.8
-    ransac_threshold: float = 3.0
+    magsac_threshold: float = 3.0
     min_matches: int = 15
 
     ## multi-anchor H0 estimation 
@@ -85,8 +85,8 @@ class AlgorithmConfig:
             raise ValueError("overlap must be strictly less than tile_size to ensure proper tiling")
         elif self.confidence_threshold < 0.0 or self.confidence_threshold > 1.0:
             raise ValueError("confidence_threshold must be in the range [0.0, 1.0]")
-        elif self.ransac_threshold <= 0.0:
-            raise ValueError("ransac_threshold must be a positive float")
+        elif self.magsac_threshold <= 0.0:
+            raise ValueError("magsac_threshold must be a positive float")
         elif self.anchor_fraction <= 0.0 or self.anchor_fraction > 1.0:
             raise ValueError("anchor_fraction must be in the range (0.0, 1.0]")
         elif self.anchor_count is not None and self.anchor_count < 1:
@@ -157,15 +157,15 @@ class GlobalAligner:
         Module for coarse image alignment using a neural feature extractor.
         Estimates a global homography matrix robust to seasonal and lighting changes.
         
-        Architectural Note (Dependency Injection):
+        Architectural note (Dependency Injection):
         This class requires an instantiated feature extractor model. 
         It expects the model to take an input dict {"image0": tensor, "image1": tensor} 
         and return a dict with keys 'keypoints0', 'keypoints1', and 'confidence'.
     '''
-    def __init__(self, engine: InferenceEngine, ransac_threshold: float, tile_size: int, overlap: int, min_matches:int,
+    def __init__(self, engine: InferenceEngine, magsac_threshold: float, tile_size: int, overlap: int, min_matches:int,
                  anchor_fraction: float = 0.3, anchor_count=None, max_anchors: int = 8,
                  anchor_score_floor: float = 0.5):
-        self.ransac_threshold = ransac_threshold
+        self.magsac_threshold = magsac_threshold
         self.engine = engine
         self.tile_size = tile_size
         self.overlap = overlap
@@ -367,7 +367,7 @@ class GlobalAligner:
             global_mkpts1 = mkpts1 + np.array([bx, by], dtype=np.float32)
 
             ## run findHomography here as a temporary filter just to clean bad matches and allow early exit
-            H, mask = cv2.findHomography(global_mkpts0, global_mkpts1, cv2.RANSAC, self.ransac_threshold)
+            H, mask = cv2.findHomography(global_mkpts0, global_mkpts1, cv2.USAC_MAGSAC, self.magsac_threshold)
             if H is None or mask is None:
                 continue
 
@@ -401,7 +401,7 @@ class GlobalAligner:
 
             Instead of trusting a single anchor tile, select k high-detail, spatially-spread
             anchors in img0, spiral-search each of them in img1, POOL all of their verified
-            correspondences, and fit ONE global homography with a single RANSAC pass. Points 
+            correspondences, and fit ONE global homography with a single USAC_MAGSAC pass. Points 
             spread all over the entire image make the alignment much more accurate and stable
             than points crowded together in just one small tile.
 
@@ -451,7 +451,7 @@ class GlobalAligner:
         pts1 = np.vstack(pool1)
         diag.pooled_points = len(pts0)
 
-        H, mask = cv2.findHomography(pts0, pts1, cv2.RANSAC, self.ransac_threshold)
+        H, mask = cv2.findHomography(pts0, pts1, cv2.USAC_MAGSAC, self.magsac_threshold)
         if H is None or mask is None:
             diag.aligned = False
             diag.reason = "global_fit_failed"
@@ -708,7 +708,7 @@ def main(args):
     engine = InferenceEngine(feature_extractor, config)
     
     aligner = GlobalAligner(
-        engine, config.ransac_threshold, config.tile_size, config.overlap, config.min_matches,
+        engine, config.magsac_threshold, config.tile_size, config.overlap, config.min_matches,
         anchor_fraction=config.anchor_fraction, anchor_count=config.anchor_count,
         max_anchors=config.max_anchors, anchor_score_floor=config.anchor_score_floor
     )
